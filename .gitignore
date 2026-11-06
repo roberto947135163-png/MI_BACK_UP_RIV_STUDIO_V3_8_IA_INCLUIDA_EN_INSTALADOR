@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.sqlite3
+.pytest_cache/
+installer/output/
+models/*.onnx
