@@ -1,0 +1,77 @@
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller pytest
+
+      - name: Compile all Python modules
+        run: python -m compileall -q main.py app tests
+
+      - name: Verify application imports
+        run: |
+          python -c "import app.ui.main_window; print('UI module OK')"
+          python -c "import PySide6, mutagen, librosa; print('Dependencies OK')"
+
+      - name: Run automated tests
+        run: python -m pytest -q
+
+      - name: Download ONE pretrained ONNX genre model into installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force models | Out-Null
+          $base = 'https://essentia.upf.edu/models/music-style-classification/discogs-effnet/'
+          foreach ($file in @('discogs-effnet-bsdynamic-1.onnx', 'discogs-effnet-bsdynamic-1.json')) {
+            Invoke-WebRequest -Uri ($base + $file) -OutFile (Join-Path 'models' $file) -MaximumRetryCount 3 -RetryIntervalSec 5
+          }
+          python -c "from app.core.pretrained_genre import model_ready; assert model_ready('models'), 'ONNX model download invalid'"
+          python -c "import onnxruntime as ort; ort.InferenceSession('models/discogs-effnet-bsdynamic-1.onnx', providers=['CPUExecutionProvider']); print('ONNX loads OK')"
+
+      - name: Build application
+        run: pyinstaller --noconfirm --clean BACKUP_DJ_ROBERTO_RIVERA.spec
+
+      - name: Verify executable
+        run: |
+          if (!(Test-Path "dist/MI_BACK_UP.exe")) { throw "EXE not generated" }
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer
+        shell: cmd
+        run: ISCC.exe installer\installer.iss
+
+      - name: Verify installer
+        run: |
+          if (!(Test-Path "installer/output/MI_BACK_UP_SETUP.exe")) { throw "Installer not generated" }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MI-BACK-UP-RIV-STUDIO-Windows
+          path: |
+            dist/MI_BACK_UP.exe
+            installer/output/MI_BACK_UP_SETUP.exe
+          if-no-files-found: error
+          retention-days: 30
